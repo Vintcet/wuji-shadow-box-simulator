@@ -1,4 +1,5 @@
 export type PriceSource = 'today' | 'yesterday' | 'latest' | 'history' | 'auction' | 'none'
+export type MissingPriceMode = 'zero' | 'box-cost'
 
 export interface LootItem {
   boxName: string
@@ -50,6 +51,7 @@ export interface SimulationRequest {
   server: string
   boxName: string
   count: number
+  missingPriceMode: MissingPriceMode
 }
 
 export interface PriceRefreshRequest {

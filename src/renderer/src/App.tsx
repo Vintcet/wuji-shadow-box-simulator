@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, Box, Coins, Database, History, Play, RefreshCw, Server, Sparkles, Trash2 } from 'lucide-react'
-import type { AppData, BoxOption, PriceRefreshProgress, PriceRefreshResult, SimulationResult } from '../../shared/types'
+import type { AppData, BoxOption, MissingPriceMode, PriceRefreshProgress, PriceRefreshResult, SimulationResult } from '../../shared/types'
 import { wujiApi } from './api'
 import brickIcon from './assets/trade/brick.png'
 import goldIcon from './assets/trade/gold.png'
@@ -154,6 +154,7 @@ export default function App() {
   const [server, setServer] = useState('')
   const [boxName, setBoxName] = useState('')
   const [count, setCount] = useState(DEFAULT_COUNT)
+  const [missingPriceMode, setMissingPriceMode] = useState<MissingPriceMode>('zero')
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [refreshResult, setRefreshResult] = useState<PriceRefreshResult | null>(null)
   const [refreshProgress, setRefreshProgress] = useState<PriceRefreshProgress | null>(null)
@@ -261,7 +262,8 @@ export default function App() {
       const nextResult = await wujiApi.simulate({
         server,
         boxName,
-        count
+        count,
+        missingPriceMode
       })
       setResult(nextResult)
       setPriceDataDates(nextResult.dataDates)
@@ -362,6 +364,14 @@ export default function App() {
             <span>价格口径</span>
             <strong>最新最低价</strong>
           </div>
+          <label>
+            <Coins size={16} />
+            <span>缺价处理</span>
+            <select value={missingPriceMode} onChange={(event) => setMissingPriceMode(event.target.value as MissingPriceMode)} disabled={loading}>
+              <option value="zero">视为0</option>
+              <option value="box-cost">视为成本价</option>
+            </select>
+          </label>
           <div>
             <Coins size={16} />
             <span>数据日期</span>

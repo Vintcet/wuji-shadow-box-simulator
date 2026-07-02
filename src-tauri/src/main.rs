@@ -23,6 +23,7 @@ const PRICE_REFRESH_COOLDOWN_MS: u128 = 5000;
 const PRICE_LOOKBACK_DAYS: i64 = 30;
 const PRICE_LOG_LIMIT: u32 = 60;
 const SIMULATION_MAX_COUNT: i64 = 999;
+const JX3BOX_ITEM_DB_BASE_DATE: &str = "2026-06-29";
 
 struct AppState {
     last_price_refresh_started_at: Mutex<u128>,
@@ -90,6 +91,7 @@ struct SimulationRequest {
     server: String,
     box_name: String,
     count: i64,
+    missing_price_mode: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,7 +179,7 @@ struct SimulationResult {
     draws: Vec<DrawResult>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawLootItem {
     school: String,
@@ -189,7 +191,7 @@ struct RawLootItem {
     missing: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawBox {
     name: String,
@@ -200,9 +202,10 @@ struct RawBox {
     items: Vec<RawLootItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawLootPools {
+    version: Option<u32>,
     enriched_at: Option<String>,
     boxes: Vec<RawBox>,
 }
@@ -230,6 +233,53 @@ struct PriceCacheFile {
     version: u32,
     updated_at: Option<String>,
     prices: HashMap<String, PriceSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemLookup {
+    item_id: Option<String>,
+    icon_id: Option<i64>,
+    jx3box_name: Option<String>,
+    missing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LootPoolOverrides {
+    version: u32,
+    updated_at: Option<String>,
+    checked_item_db_time: Option<String>,
+    items: HashMap<String, ItemLookup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jx3boxItemSearchResponse {
+    data: Option<Jx3boxItemSearchData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jx3boxItemSearchData {
+    data: Option<Vec<Jx3boxItemSearchItem>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(non_snake_case)]
+struct Jx3boxItemSearchItem {
+    id: Option<String>,
+    Name: Option<String>,
+    IconID: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jx3boxDatabaseStat {
+    version: Option<Vec<Jx3boxDatabaseVersion>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jx3boxDatabaseVersion {
+    name: Option<String>,
+    time: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -312,8 +362,82 @@ fn raw_loot_pools() -> Result<RawLootPools, String> {
     serde_json::from_str(LOOT_POOLS_JSON).map_err(|error| format!("读取掉落池数据失败：{error}"))
 }
 
-fn load_loot_dataset() -> Result<LootDataset, String> {
-    let raw = raw_loot_pools()?;
+fn loot_overrides_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("loot-pools-overrides.json"))
+        .map_err(|error| format!("获取数据补全目录失败：{error}"))
+}
+
+fn load_loot_overrides(app: &AppHandle) -> Result<LootPoolOverrides, String> {
+    let path = loot_overrides_path(app)?;
+    match fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).map_err(|error| format!("读取数据补全缓存失败：{error}")),
+        Err(_) => Ok(LootPoolOverrides {
+            version: 1,
+            updated_at: None,
+            checked_item_db_time: None,
+            items: HashMap::new(),
+        }),
+    }
+}
+
+fn save_loot_overrides(app: &AppHandle, overrides: &LootPoolOverrides) -> Result<(), String> {
+    let path = loot_overrides_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建数据补全目录失败：{error}"))?;
+    }
+    let content = serde_json::to_string_pretty(overrides).map_err(|error| format!("序列化数据补全缓存失败：{error}"))?;
+    fs::write(path, format!("{content}\n")).map_err(|error| format!("写入数据补全缓存失败：{error}"))
+}
+
+fn apply_lookup_to_box(box_item: &mut RawBox, lookup: &ItemLookup) {
+    if box_item.item_id.is_none() {
+        box_item.item_id = lookup.item_id.clone();
+    }
+    if box_item.icon_id.is_none() {
+        box_item.icon_id = lookup.icon_id;
+    }
+    if box_item.jx3box_name.is_none() {
+        box_item.jx3box_name = lookup.jx3box_name.clone();
+    }
+    if lookup.item_id.is_some() {
+        box_item.missing = Some(false);
+    }
+}
+
+fn apply_lookup_to_item(item: &mut RawLootItem, lookup: &ItemLookup) {
+    if item.item_id.is_none() {
+        item.item_id = lookup.item_id.clone();
+    }
+    if item.icon_id.is_none() {
+        item.icon_id = lookup.icon_id;
+    }
+    if item.jx3box_name.is_none() {
+        item.jx3box_name = lookup.jx3box_name.clone();
+    }
+    if lookup.item_id.is_some() {
+        item.missing = Some(false);
+    }
+}
+
+fn apply_loot_overrides(raw: &mut RawLootPools, overrides: &LootPoolOverrides) {
+    for box_item in &mut raw.boxes {
+        if let Some(lookup) = overrides.items.get(&box_item.name) {
+            apply_lookup_to_box(box_item, lookup);
+        }
+        for item in &mut box_item.items {
+            if let Some(lookup) = overrides.items.get(&item.item_name) {
+                apply_lookup_to_item(item, lookup);
+            }
+        }
+    }
+}
+
+fn load_loot_dataset(app: &AppHandle) -> Result<LootDataset, String> {
+    let mut raw = raw_loot_pools()?;
+    let overrides = load_loot_overrides(app)?;
+    apply_loot_overrides(&mut raw, &overrides);
     let mut loot_by_box = HashMap::new();
     let mut box_refs = HashMap::new();
 
@@ -554,6 +678,158 @@ async fn fetch_json<T: DeserializeOwned>(client: &Client, url: &str) -> Result<T
     response.json::<T>().await.map_err(|error| error.to_string())
 }
 
+async fn search_jx3box_item(client: &Client, item_name: &str) -> Result<ItemLookup, String> {
+    let url = format!(
+        "https://node.jx3box.com/api/node/item/search?ids=&keyword={}&client=std&per=35",
+        urlencoding::encode(item_name)
+    );
+    let payload: Jx3boxItemSearchResponse = fetch_json(client, &url).await?;
+    let items = payload.data.and_then(|data| data.data).unwrap_or_default();
+    let wanted = normalize_name(item_name);
+
+    let selected = items
+        .iter()
+        .find(|candidate| candidate.Name.as_deref() == Some(item_name))
+        .or_else(|| {
+            items
+                .iter()
+                .find(|candidate| candidate.Name.as_deref().is_some_and(|name| normalize_name(name) == wanted))
+        })
+        .or_else(|| {
+            items
+                .iter()
+                .find(|candidate| candidate.Name.as_deref().is_some_and(|name| normalize_name(name).contains(&wanted)))
+        });
+
+    Ok(selected
+        .and_then(|item| {
+            item.id.as_ref().map(|item_id| ItemLookup {
+                item_id: Some(item_id.clone()),
+                icon_id: item.IconID,
+                jx3box_name: item.Name.clone(),
+                missing: false,
+            })
+        })
+        .unwrap_or(ItemLookup {
+            item_id: None,
+            icon_id: None,
+            jx3box_name: None,
+            missing: true,
+        }))
+}
+
+fn date_part(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.len() >= 10 {
+        Some(&value[..10])
+    } else {
+        None
+    }
+}
+
+fn is_jx3box_item_db_newer(time: &str) -> bool {
+    date_part(time).is_some_and(|date| date > JX3BOX_ITEM_DB_BASE_DATE)
+}
+
+async fn fetch_jx3box_item_db_time(client: &Client) -> Result<Option<String>, String> {
+    let payload: Jx3boxDatabaseStat = fetch_json(client, "https://node.jx3box.com/?client=std").await?;
+    Ok(payload
+        .version
+        .unwrap_or_default()
+        .into_iter()
+        .find(|version| version.name.as_deref() == Some("item"))
+        .and_then(|version| version.time))
+}
+
+async fn enrich_missing_loot_data(app: &AppHandle, client: &Client) -> Result<usize, String> {
+    let mut raw = raw_loot_pools()?;
+    let mut overrides = load_loot_overrides(app)?;
+    apply_loot_overrides(&mut raw, &overrides);
+
+    let item_db_time = fetch_jx3box_item_db_time(client).await?;
+    let Some(item_db_time) = item_db_time else {
+        write_app_log("loot_data_enrich_skipped_no_db_version", serde_json::json!({}));
+        return Ok(0);
+    };
+
+    if !is_jx3box_item_db_newer(&item_db_time) {
+        write_app_log(
+            "loot_data_enrich_skipped_db_not_newer",
+            serde_json::json!({
+                "itemDbTime": item_db_time,
+                "baseDate": JX3BOX_ITEM_DB_BASE_DATE
+            }),
+        );
+        return Ok(0);
+    }
+
+    if overrides.checked_item_db_time.as_deref() == Some(item_db_time.as_str()) {
+        write_app_log(
+            "loot_data_enrich_skipped_db_already_checked",
+            serde_json::json!({
+                "itemDbTime": item_db_time
+            }),
+        );
+        return Ok(0);
+    }
+
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for box_item in &raw.boxes {
+        if box_item.item_id.is_none() && seen.insert(box_item.name.clone()) {
+            names.push(box_item.name.clone());
+        }
+        for item in &box_item.items {
+            if item.item_id.is_none() && seen.insert(item.item_name.clone()) {
+                names.push(item.item_name.clone());
+            }
+        }
+    }
+
+    if names.is_empty() {
+        overrides.checked_item_db_time = Some(item_db_time);
+        save_loot_overrides(app, &overrides)?;
+        return Ok(0);
+    }
+
+    let mut resolved = 0;
+    for name in names {
+        match search_jx3box_item(client, &name).await {
+            Ok(lookup) => {
+                if lookup.item_id.is_some() {
+                    resolved += 1;
+                    overrides.items.insert(name, lookup);
+                }
+            }
+            Err(error) => {
+                write_app_log(
+                    "loot_data_enrich_item_failed",
+                    serde_json::json!({
+                        "itemName": name,
+                        "error": error
+                    }),
+                );
+            }
+        }
+    }
+
+    overrides.checked_item_db_time = Some(item_db_time.clone());
+    if resolved > 0 {
+        overrides.updated_at = Some(iso_now());
+    }
+    save_loot_overrides(app, &overrides)?;
+    write_app_log(
+        "loot_data_enriched",
+        serde_json::json!({
+            "resolved": resolved,
+            "itemDbTime": item_db_time,
+            "overridePath": loot_overrides_path(app).map(|path| path.display().to_string()).unwrap_or_default()
+        }),
+    );
+
+    Ok(resolved)
+}
+
 async fn post_json_value(client: &Client, url: &str, payload: Value) -> Result<Value, String> {
     let response = client
         .post(url)
@@ -779,7 +1055,7 @@ async fn get_cached_price(app: &AppHandle, item_ref: &PriceItemRef, server: &str
 
 #[tauri::command]
 async fn get_data(app: AppHandle) -> Result<AppData, String> {
-    let dataset = load_loot_dataset()?;
+    let dataset = load_loot_dataset(&app)?;
     let price_cache = load_price_cache(&app)?;
     Ok(AppData {
         boxes: dataset.boxes,
@@ -819,8 +1095,26 @@ async fn refresh_prices(app: AppHandle, state: tauri::State<'_, AppState>, reque
 
     let started_at = now_millis();
     let result = async {
-        let dataset = load_loot_dataset()?;
         let refresh_all = request.scope.as_deref() == Some("all");
+        let client = Client::builder()
+            .user_agent("wuji-shadow-box-simulator/0.1.0")
+            .build()
+            .map_err(|error| error.to_string())?;
+
+        if refresh_all {
+            let resolved = enrich_missing_loot_data(&app, &client).await?;
+            if resolved > 0 {
+                write_app_log(
+                    "price_refresh_loot_data_enriched",
+                    serde_json::json!({
+                        "requestId": request_id,
+                        "resolved": resolved
+                    }),
+                );
+            }
+        }
+
+        let dataset = load_loot_dataset(&app)?;
         let refs = if refresh_all {
             get_refs_for_all_boxes(&dataset)
         } else {
@@ -877,10 +1171,6 @@ async fn refresh_prices(app: AppHandle, state: tauri::State<'_, AppState>, reque
             },
         );
 
-        let client = Client::builder()
-            .user_agent("wuji-shadow-box-simulator/0.1.0")
-            .build()
-            .map_err(|error| error.to_string())?;
         let mut stream = futures_util::stream::iter(tasks.into_iter().map(|task| {
             let client = client.clone();
             async move {
@@ -994,7 +1284,7 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
     let started_at = now_millis();
     let count = request.count.clamp(1, SIMULATION_MAX_COUNT);
     let result = async {
-        let dataset = load_loot_dataset()?;
+        let dataset = load_loot_dataset(&app)?;
         let loot_pool = dataset
             .loot_by_box
             .get(&request.box_name)
@@ -1017,6 +1307,8 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
             .get(&box_key)
             .cloned()
             .unwrap_or_else(|| snapshot_without_price(box_ref, &request.server, "本地没有价格缓存", None));
+        let box_unit_cost = box_price.lowest_price;
+        let use_box_cost_for_missing = request.missing_price_mode == "box-cost";
 
         let mut rng = rand::thread_rng();
         let draws = (0..count as usize)
@@ -1025,16 +1317,44 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
                 let key = item.item_id.clone().unwrap_or_else(|| normalize_name(&item.item_name));
                 let price = snapshot_by_key.get(&key);
                 let lowest_price = price.and_then(|snapshot| snapshot.lowest_price);
+                let (item_name, final_price, final_net_price, final_date, icon_url) = if lowest_price.is_some() {
+                    (
+                        item.item_name.clone(),
+                        lowest_price,
+                        apply_sale_fee(lowest_price),
+                        price.and_then(|snapshot| snapshot.date.clone()),
+                        price
+                            .and_then(|snapshot| snapshot.icon_url.clone())
+                            .or_else(|| icon_url_from_icon_id(item.icon_id)),
+                    )
+                } else if use_box_cost_for_missing {
+                    (
+                        "成本价".to_string(),
+                        box_unit_cost,
+                        box_unit_cost,
+                        box_price.date.clone(),
+                        box_price.icon_url.clone(),
+                    )
+                } else {
+                    (
+                        item.item_name.clone(),
+                        Some(0),
+                        Some(0),
+                        None,
+                        price
+                            .and_then(|snapshot| snapshot.icon_url.clone())
+                            .or_else(|| icon_url_from_icon_id(item.icon_id)),
+                    )
+                };
+
                 DrawResult {
                     index: draw_index + 1,
-                    item_name: item.item_name.clone(),
+                    item_name,
                     school: item.school.clone(),
-                    icon_url: price
-                        .and_then(|snapshot| snapshot.icon_url.clone())
-                        .or_else(|| icon_url_from_icon_id(item.icon_id)),
-                    price: lowest_price,
-                    net_price: apply_sale_fee(lowest_price),
-                    date: price.and_then(|snapshot| snapshot.date.clone()),
+                    icon_url,
+                    price: final_price,
+                    net_price: final_net_price,
+                    date: final_date,
                 }
             })
             .collect::<Vec<_>>();
@@ -1069,7 +1389,6 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
         let gross_value = draws.iter().map(|item| item.price.unwrap_or(0)).sum::<i64>();
         let total_value = draws.iter().map(|item| item.net_price.unwrap_or(0)).sum::<i64>();
         let sale_fee = gross_value - total_value;
-        let box_unit_cost = box_price.lowest_price;
         let total_cost = box_unit_cost.map(|price| price * count);
         let profit = total_cost.map(|cost| total_value - cost);
         let roi = match (profit, total_cost) {

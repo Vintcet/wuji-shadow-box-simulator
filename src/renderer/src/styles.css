@@ -336,7 +336,15 @@ select {
   gap: 10px;
 }
 
-.source-panel div svg {
+.source-panel label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.source-panel div svg,
+.source-panel label svg {
   flex: 0 0 auto;
 }
 
@@ -346,6 +354,23 @@ select {
   font-size: 13px;
   font-weight: 700;
   text-align: right;
+}
+
+.source-panel label span {
+  color: #5d574f;
+  font-size: 14px;
+}
+
+.source-panel select {
+  width: 106px;
+  min-height: 30px;
+  border: 1px solid #c9bfad;
+  border-radius: 6px;
+  background: #fffdf8;
+  color: #23211d;
+  padding: 0 8px;
+  font-size: 13px;
+  outline: none;
 }
 
 .workspace {
