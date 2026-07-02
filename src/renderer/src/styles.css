@@ -239,20 +239,21 @@ select {
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: min(430px, calc(100vh - 190px));
+  gap: 10px;
+  max-height: min(580px, calc(100vh - 190px));
   overflow: auto;
   padding-right: 2px;
 }
 
 .history-record {
   display: grid;
-  gap: 6px;
+  gap: 9px;
+  min-height: 108px;
   border: 1px solid #d8d1c3;
   border-left: 4px solid #887f72;
   border-radius: 8px;
   background: #fffdf8;
-  padding: 8px;
+  padding: 11px;
 }
 
 .history-record.positive {
@@ -265,13 +266,13 @@ select {
 
 .history-main {
   display: grid;
-  gap: 3px;
+  gap: 5px;
 }
 
 .history-main strong {
   overflow: hidden;
   color: #23211d;
-  font-size: 14px;
+  font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -280,12 +281,12 @@ select {
 .history-line,
 .history-warning {
   color: #6b665f;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .history-line strong {
   color: #23211d;
-  font-size: 13px;
+  font-size: 15px;
   text-align: right;
 }
 
