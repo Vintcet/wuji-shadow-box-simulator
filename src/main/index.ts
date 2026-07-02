@@ -78,6 +78,11 @@ interface PriceLog {
   SampleSize?: number
 }
 
+interface AuctionPriceLog {
+  price?: number
+  timestamp?: number | string
+}
+
 interface PriceCacheFile {
   version: number
   updatedAt: string | null
@@ -90,6 +95,8 @@ let cachedPriceFile: PriceCacheFile | null = null
 const SALE_FEE_RATE = 0.05
 const PRICE_REFRESH_CONCURRENCY = 16
 const PRICE_REFRESH_COOLDOWN_MS = 5000
+const PRICE_LOOKBACK_DAYS = 15
+const PRICE_LOG_LIMIT = 60
 const SIMULATION_MAX_COUNT = 999
 let lastPriceRefreshStartedAt = 0
 
@@ -152,8 +159,46 @@ function localDateKey(value: string | Date | null): string | null {
   return `${year}-${month}-${day}`
 }
 
+function startOfLocalDate(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function parsePriceDate(value: string | null): Date | null {
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00+08:00` : value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isWithinPriceLookback(value: string | null, now = new Date()): boolean {
+  const date = parsePriceDate(value)
+  if (!date) {
+    return false
+  }
+
+  const earliest = startOfLocalDate(now)
+  earliest.setDate(earliest.getDate() - (PRICE_LOOKBACK_DAYS - 1))
+  return startOfLocalDate(date).getTime() >= earliest.getTime()
+}
+
 function wasPriceUpdatedToday(snapshot: PriceSnapshot | undefined, todayKey: string): boolean {
   return Boolean(snapshot?.lowestPrice !== null && localDateKey(snapshot?.fetchedAt ?? null) === todayKey)
+}
+
+function priceDateFromAuctionTimestamp(value: number | string | undefined): string | null {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    return null
+  }
+
+  const date = new Date(numeric < 10000000000 ? numeric * 1000 : numeric)
+  return localDateKey(date)
 }
 
 function createWindow(): void {
@@ -316,6 +361,68 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T
 }
 
+async function postJson<T>(url: string, payload: Record<string, unknown>): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json,text/plain,*/*',
+      'content-type': 'application/json',
+      'user-agent': 'wuji-shadow-box-simulator/0.1.0'
+    },
+    body: JSON.stringify(payload)
+  })
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  return (await response.json()) as T
+}
+
+function usablePriceLog(log: PriceLog | null | undefined, now = new Date()): PriceLog | null {
+  if (!log || typeof log.LowestPrice !== 'number' || !log.Date || !isWithinPriceLookback(log.Date, now)) {
+    return null
+  }
+  return log
+}
+
+async function queryPriceFromAuctionHistory(ref: PriceItemRef, server: string, fetchedAt: string): Promise<PriceSnapshot | null> {
+  if (!ref.itemId) {
+    return null
+  }
+
+  const payload = await postJson<AuctionPriceLog[] | { data?: AuctionPriceLog[] | null }>('https://next2.jx3box.com/api/auction/', {
+    server,
+    item_id: ref.itemId,
+    aggregate_type: 'daily'
+  })
+  const rows = Array.isArray(payload) ? payload : payload.data ?? []
+  const selected = rows
+    .map((row) => ({
+      ...row,
+      date: priceDateFromAuctionTimestamp(row.timestamp)
+    }))
+    .filter((row) => typeof row.price === 'number' && row.date && isWithinPriceLookback(row.date))
+    .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))[0] ?? null
+
+  if (!selected || !selected.date || typeof selected.price !== 'number') {
+    return null
+  }
+
+  return {
+    itemId: ref.itemId,
+    itemName: ref.jx3boxName ?? ref.itemName,
+    server,
+    iconUrl: iconUrlFromIconId(ref.iconId),
+    lowestPrice: selected.price,
+    date: selected.date,
+    updatedAt: null,
+    fetchedAt,
+    sampleSize: null,
+    source: 'auction'
+  }
+}
+
 async function queryPriceFromApi(ref: PriceItemRef, server: string): Promise<PriceSnapshot> {
   const fetchedAt = new Date().toISOString()
 
@@ -324,7 +431,7 @@ async function queryPriceFromApi(ref: PriceItemRef, server: string): Promise<Pri
   }
 
   try {
-    const url = `https://next2.jx3box.com/api/item-price/${encodeURIComponent(ref.itemId)}/logs?server=${encodeURIComponent(server)}&limit=20`
+    const url = `https://next2.jx3box.com/api/item-price/${encodeURIComponent(ref.itemId)}/logs?server=${encodeURIComponent(server)}&limit=${PRICE_LOG_LIMIT}`
     const payload = await fetchJson<{
       data?: {
         logs?: PriceLog[] | null
@@ -333,29 +440,35 @@ async function queryPriceFromApi(ref: PriceItemRef, server: string): Promise<Pri
       }
     }>(url)
 
-    const today = payload.data?.today ?? null
-    const yesterday = payload.data?.yesterday ?? null
+    const now = new Date()
+    const today = usablePriceLog(payload.data?.today, now)
+    const yesterday = usablePriceLog(payload.data?.yesterday, now)
     const latest = (payload.data?.logs ?? [])
-      .filter((log) => typeof log.LowestPrice === 'number' && log.Date)
+      .filter((log) => usablePriceLog(log, now))
       .sort((a, b) => b.Date.localeCompare(a.Date))[0] ?? null
     const selected = today ?? yesterday ?? latest
 
-    if (!selected) {
-      return snapshotWithoutPrice(ref, server, '没有可用最低价数据', fetchedAt)
+    if (selected) {
+      return {
+        itemId: ref.itemId,
+        itemName: ref.jx3boxName ?? ref.itemName,
+        server,
+        iconUrl: iconUrlFromIconId(ref.iconId),
+        lowestPrice: selected.LowestPrice,
+        date: selected.Date,
+        updatedAt: selected.UpdatedAt ?? null,
+        fetchedAt,
+        sampleSize: selected.SampleSize ?? null,
+        source: today ? 'today' : yesterday ? 'yesterday' : 'history'
+      }
     }
 
-    return {
-      itemId: ref.itemId,
-      itemName: ref.jx3boxName ?? ref.itemName,
-      server,
-      iconUrl: iconUrlFromIconId(ref.iconId),
-      lowestPrice: selected.LowestPrice,
-      date: selected.Date,
-      updatedAt: selected.UpdatedAt ?? null,
-      fetchedAt,
-      sampleSize: selected.SampleSize ?? null,
-      source: today ? 'today' : yesterday ? 'yesterday' : 'latest'
+    const auctionSnapshot = await queryPriceFromAuctionHistory(ref, server, fetchedAt)
+    if (auctionSnapshot) {
+      return auctionSnapshot
     }
+
+    return snapshotWithoutPrice(ref, server, `最近${PRICE_LOOKBACK_DAYS}天没有可用最低价数据`, fetchedAt)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return snapshotWithoutPrice(ref, server, message, fetchedAt)

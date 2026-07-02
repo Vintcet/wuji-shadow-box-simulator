@@ -1,4 +1,4 @@
-export type PriceSource = 'today' | 'yesterday' | 'latest' | 'none'
+export type PriceSource = 'today' | 'yesterday' | 'latest' | 'history' | 'auction' | 'none'
 
 export interface LootItem {
   boxName: string
