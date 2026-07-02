@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
 import type { WebContents } from 'electron'
 import { dirname, join } from 'node:path'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import lootPools from './data/loot-pools.json'
 import type {
   AppData,
@@ -52,7 +52,6 @@ interface RawBox {
 
 interface RawLootPools {
   version: number
-  source: string
   enrichedAt?: string
   boxes: RawBox[]
 }
@@ -90,6 +89,71 @@ let cachedDataset: LootDataset | null = null
 let cachedPriceFile: PriceCacheFile | null = null
 const SALE_FEE_RATE = 0.05
 const PRICE_REFRESH_CONCURRENCY = 16
+const PRICE_REFRESH_COOLDOWN_MS = 5000
+let lastPriceRefreshStartedAt = 0
+
+interface AppLogEntry {
+  event: string
+  details?: Record<string, unknown>
+}
+
+function getLogPath(): string {
+  return join(app.getPath('userData'), 'app.log')
+}
+
+async function writeAppLog(event: string, details: Record<string, unknown> = {}): Promise<void> {
+  await writeAppLogEntries([{ event, details }])
+}
+
+async function writeAppLogEntries(entries: AppLogEntry[]): Promise<void> {
+  if (entries.length === 0) {
+    return
+  }
+
+  try {
+    const logPath = getLogPath()
+    await mkdir(dirname(logPath), { recursive: true })
+    await appendFile(
+      logPath,
+      entries
+        .map(({ event, details = {} }) =>
+          JSON.stringify({
+            time: new Date().toISOString(),
+            event,
+            ...details
+          })
+        )
+        .join('\n') + '\n',
+      'utf8'
+    )
+  } catch (error) {
+    console.error('Failed to write app log:', error)
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function localDateKey(value: string | Date | null): string | null {
+  if (!value) {
+    return null
+  }
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function wasPriceUpdatedToday(snapshot: PriceSnapshot | undefined, todayKey: string): boolean {
+  return Boolean(snapshot?.lowestPrice !== null && localDateKey(snapshot?.fetchedAt ?? null) === todayKey)
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -151,7 +215,7 @@ function loadLootDataset(): LootDataset {
   }
 
   cachedDataset = {
-    sourcePath: `src/main/data/loot-pools.json (${staticLootPools.source})`,
+    sourcePath: 'src/main/data/loot-pools.json',
     loadedAt: staticLootPools.enrichedAt ?? new Date().toISOString(),
     boxes: staticLootPools.boxes.map((box) => ({
       name: box.name,
@@ -384,36 +448,61 @@ function sendPriceRefreshProgress(sender: WebContents | null, progress: PriceRef
 }
 
 async function refreshPrices(request: PriceRefreshRequest, sender: WebContents | null = null): Promise<PriceRefreshResult> {
-  const refreshAll = request.scope === 'all'
-  const refs = refreshAll ? getRefsForAllBoxes() : getRefsForBox(request.boxName)
-  const servers = refreshAll ? getAllServers() : [request.server]
-  const tasks = servers.flatMap((serverName) => refs.map((ref) => ({ server: serverName, ref })))
   const requestId = request.requestId ?? `${Date.now()}`
-  const total = tasks.length
-  let completed = 0
-  let success = 0
-  let failed = 0
+  const now = Date.now()
+  const cooldownRemaining = PRICE_REFRESH_COOLDOWN_MS - (now - lastPriceRefreshStartedAt)
 
-  sendPriceRefreshProgress(sender, {
-    requestId,
-    completed,
-    total,
-    success,
-    failed,
-    server: null,
-    itemName: null,
-    done: false
-  })
+  if (cooldownRemaining > 0) {
+    await writeAppLog('price_refresh_blocked_cooldown', {
+      requestId,
+      scope: request.scope ?? 'selected',
+      server: request.server,
+      boxName: request.boxName,
+      cooldownRemainingMs: cooldownRemaining
+    })
+    throw new Error(`更新价格太频繁，请 ${Math.ceil(cooldownRemaining / 1000)} 秒后再试。`)
+  }
 
-  const results = await mapLimit(tasks, PRICE_REFRESH_CONCURRENCY, async (task) => {
-    const snapshot = await queryPriceFromApi(task.ref, task.server)
+  lastPriceRefreshStartedAt = now
+  const startedAt = now
 
-    completed += 1
-    if (snapshot.lowestPrice !== null) {
-      success += 1
-    } else {
-      failed += 1
+  try {
+    const refreshAll = request.scope === 'all'
+    const refs = refreshAll ? getRefsForAllBoxes() : getRefsForBox(request.boxName)
+    const servers = refreshAll ? getAllServers() : [request.server]
+    const allTasks = servers.flatMap((serverName) => refs.map((ref) => ({ server: serverName, ref })))
+    const cache = await loadPriceCache()
+    const todayKey = localDateKey(new Date()) ?? ''
+    const skippedTasks: Array<{ server: string; ref: PriceItemRef; snapshot: PriceSnapshot }> = []
+    const tasks: Array<{ server: string; ref: PriceItemRef }> = []
+
+    for (const task of allTasks) {
+      const snapshot = cache.prices[cacheKey(task.server, task.ref)]
+      if (wasPriceUpdatedToday(snapshot, todayKey)) {
+        skippedTasks.push({ ...task, snapshot })
+      } else {
+        tasks.push(task)
+      }
     }
+
+    const total = tasks.length
+    const skipped = skippedTasks.length
+    let completed = 0
+    let success = 0
+    let failed = 0
+
+    await writeAppLog('price_refresh_start', {
+      requestId,
+      scope: refreshAll ? 'all' : 'selected',
+      server: refreshAll ? '全部区服' : request.server,
+      boxName: refreshAll ? '全部图' : request.boxName,
+      serverCount: servers.length,
+      itemCount: refs.length,
+      candidateTotal: allTasks.length,
+      total,
+      skipped,
+      concurrency: PRICE_REFRESH_CONCURRENCY
+    })
 
     sendPriceRefreshProgress(sender, {
       requestId,
@@ -421,36 +510,122 @@ async function refreshPrices(request: PriceRefreshRequest, sender: WebContents |
       total,
       success,
       failed,
-      server: task.server,
-      itemName: task.ref.jx3boxName ?? task.ref.itemName,
-      done: completed === total
+      skipped,
+      server: null,
+      itemName: null,
+      done: total === 0
     })
 
-    return {
-      server: task.server,
-      ref: task.ref,
-      snapshot
+    const results = await mapLimit(tasks, PRICE_REFRESH_CONCURRENCY, async (task) => {
+      const snapshot = await queryPriceFromApi(task.ref, task.server)
+
+      completed += 1
+      if (snapshot.lowestPrice !== null) {
+        success += 1
+      } else {
+        failed += 1
+      }
+
+      sendPriceRefreshProgress(sender, {
+        requestId,
+        completed,
+        total,
+        success,
+        failed,
+        skipped,
+        server: task.server,
+        itemName: task.ref.jx3boxName ?? task.ref.itemName,
+        done: completed === total
+      })
+
+      return {
+        server: task.server,
+        ref: task.ref,
+        snapshot
+      }
+    })
+    const updatedAt = new Date().toISOString()
+
+    for (const result of results) {
+      cache.prices[cacheKey(result.server, result.ref)] = result.snapshot
     }
-  })
-  const cache = await loadPriceCache()
-  const updatedAt = new Date().toISOString()
 
-  for (const result of results) {
-    cache.prices[cacheKey(result.server, result.ref)] = result.snapshot
-  }
+    if (results.length > 0) {
+      cache.updatedAt = updatedAt
+      await savePriceCache(cache)
+    }
 
-  cache.updatedAt = updatedAt
-  await savePriceCache(cache)
+    const logEntries: AppLogEntry[] = [
+      ...skippedTasks.map((task) => ({
+        event: 'price_refresh_item',
+        details: {
+          requestId,
+          status: 'skipped',
+          reason: 'already_updated_today',
+          server: task.server,
+          itemId: task.ref.itemId,
+          itemName: task.ref.jx3boxName ?? task.ref.itemName,
+          lowestPrice: task.snapshot.lowestPrice,
+          priceDate: task.snapshot.date,
+          fetchedAt: task.snapshot.fetchedAt
+        }
+      })),
+      ...results.map((result) => ({
+        event: 'price_refresh_item',
+        details: {
+          requestId,
+          status: result.snapshot.lowestPrice !== null ? 'success' : 'failed',
+          server: result.server,
+          itemId: result.ref.itemId,
+          itemName: result.ref.jx3boxName ?? result.ref.itemName,
+          lowestPrice: result.snapshot.lowestPrice,
+          priceDate: result.snapshot.date,
+          source: result.snapshot.source,
+          fetchedAt: result.snapshot.fetchedAt,
+          error: result.snapshot.lowestPrice === null ? result.snapshot.error ?? 'unknown' : null
+        }
+      }))
+    ]
 
-  return {
-    server: refreshAll ? '全部区服' : request.server,
-    boxName: refreshAll ? '全部图' : request.boxName,
-    updatedAt,
-    cachePath: getPriceCachePath(),
-    total: results.length,
-    success,
-    failed,
-    snapshots: results.map((result) => result.snapshot)
+    await writeAppLogEntries(logEntries)
+
+    const response = {
+      server: refreshAll ? '全部区服' : request.server,
+      boxName: refreshAll ? '全部图' : request.boxName,
+      updatedAt: cache.updatedAt ?? updatedAt,
+      cachePath: getPriceCachePath(),
+      total: results.length,
+      success,
+      failed,
+      skipped,
+      snapshots: results.map((result) => result.snapshot)
+    }
+
+    await writeAppLog('price_refresh_complete', {
+      requestId,
+      scope: refreshAll ? 'all' : 'selected',
+      server: response.server,
+      boxName: response.boxName,
+      total: response.total,
+      success,
+      failed,
+      skipped,
+      cachePath: response.cachePath,
+      updatedAt: response.updatedAt,
+      elapsedMs: Date.now() - startedAt
+    })
+
+    return response
+  } catch (error) {
+    await writeAppLog('price_refresh_failed', {
+      requestId,
+      scope: request.scope ?? 'selected',
+      server: request.server,
+      boxName: request.boxName,
+      error: errorMessage(error),
+      elapsedMs: Date.now() - startedAt
+    })
+    throw error
   }
 }
 
@@ -480,7 +655,15 @@ function applySaleFee(price: number | null): number | null {
 }
 
 async function simulate(request: SimulationRequest): Promise<SimulationResult> {
+  const startedAt = Date.now()
   const count = Math.max(1, Math.min(10000, Math.floor(Number(request.count) || 1)))
+  await writeAppLog('simulation_start', {
+    server: request.server,
+    boxName: request.boxName,
+    count
+  })
+
+  try {
   const dataset = loadLootDataset()
   const lootPool = dataset.lootByBox.get(request.boxName)
   const boxRef = dataset.boxRefs.get(request.boxName)
@@ -557,7 +740,7 @@ async function simulate(request: SimulationRequest): Promise<SimulationResult> {
   const missingItems = items.filter((item) => item.unitPrice === null).map((item) => item.itemName)
   const dataDates = [...new Set([boxPrice.date, ...items.map((item) => item.date)].filter(Boolean) as string[])].sort()
 
-  return {
+  const response: SimulationResult = {
     boxName: request.boxName,
     server: request.server,
     count,
@@ -576,6 +759,30 @@ async function simulate(request: SimulationRequest): Promise<SimulationResult> {
     missingItems,
     items,
     draws
+  }
+
+  await writeAppLog('simulation_complete', {
+    server: response.server,
+    boxName: response.boxName,
+    count: response.count,
+    totalCost: response.totalCost,
+    totalValue: response.totalValue,
+    profit: response.profit,
+    roi: response.roi,
+    missingPriceCount: response.missingPriceCount,
+    elapsedMs: Date.now() - startedAt
+  })
+
+  return response
+  } catch (error) {
+    await writeAppLog('simulation_failed', {
+      server: request.server,
+      boxName: request.boxName,
+      count,
+      error: errorMessage(error),
+      elapsedMs: Date.now() - startedAt
+    })
+    throw error
   }
 }
 

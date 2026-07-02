@@ -67,6 +67,7 @@ export interface PriceRefreshResult {
   total: number
   success: number
   failed: number
+  skipped: number
   snapshots: PriceSnapshot[]
 }
 
@@ -76,6 +77,7 @@ export interface PriceRefreshProgress {
   total: number
   success: number
   failed: number
+  skipped: number
   server: string | null
   itemName: string | null
   done: boolean

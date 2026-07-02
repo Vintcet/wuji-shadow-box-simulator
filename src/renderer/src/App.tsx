@@ -176,11 +176,11 @@ export default function App() {
   }, [])
 
   const priceStatus = refreshing
-    ? refreshProgress && refreshProgress.total > 0
-      ? `更新中：${refreshProgress.completed}/${refreshProgress.total}，成功 ${refreshProgress.success}，失败 ${refreshProgress.failed}`
+    ? refreshProgress
+      ? `更新中：${refreshProgress.completed}/${refreshProgress.total}，成功 ${refreshProgress.success}，失败 ${refreshProgress.failed}，跳过 ${refreshProgress.skipped}`
       : '更新中...'
     : refreshResult
-      ? `更新完成：成功 ${refreshResult.success}，失败 ${refreshResult.failed}`
+      ? `更新完成：成功 ${refreshResult.success}，失败 ${refreshResult.failed}，跳过 ${refreshResult.skipped}`
       : ''
 
   useEffect(() => {
