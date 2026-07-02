@@ -91,17 +91,18 @@ function formatDateTime(value: string | null): string {
   })
 }
 
-function dateLabel(result: SimulationResult | null): string {
-  if (!result) {
+function dataDateLabel(dates: string[]): string {
+  if (dates.length === 0) {
     return '待查询'
   }
-  if (result.dataDates.length === 0) {
-    return '无价格数据'
+  if (dates.length === 1) {
+    return dates[0]
   }
-  if (result.dataDates.length === 1) {
-    return result.dataDates[0]
-  }
-  return `${result.dataDates[0]} 至 ${result.dataDates[result.dataDates.length - 1]}`
+  return `${dates[0]} 至 ${dates[dates.length - 1]}`
+}
+
+function dataDatesFromRefreshResult(result: PriceRefreshResult): string[] {
+  return [...new Set(result.snapshots.map((snapshot) => snapshot.date).filter(Boolean) as string[])].sort()
 }
 
 function optionLabel(box: BoxOption): string {
@@ -157,6 +158,7 @@ export default function App() {
   const [refreshProgress, setRefreshProgress] = useState<PriceRefreshProgress | null>(null)
   const [showRefreshStatus, setShowRefreshStatus] = useState(false)
   const [historyRecords, setHistoryRecords] = useState<OpeningHistoryRecord[]>(readHistoryRecords)
+  const [priceDataDates, setPriceDataDates] = useState<string[]>([])
   const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -233,6 +235,10 @@ export default function App() {
       })
       setRefreshResult(nextRefreshResult)
       setCacheUpdatedAt(nextRefreshResult.updatedAt)
+      const nextDataDates = dataDatesFromRefreshResult(nextRefreshResult)
+      if (nextDataDates.length > 0) {
+        setPriceDataDates(nextDataDates)
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -255,6 +261,7 @@ export default function App() {
         count
       })
       setResult(nextResult)
+      setPriceDataDates(nextResult.dataDates)
       setHistoryRecords((records) => {
         const nextRecords = [historyRecordFromResult(nextResult), ...records].slice(0, MAX_HISTORY_RECORDS)
         saveHistoryRecords(nextRecords)
@@ -355,7 +362,7 @@ export default function App() {
           <div>
             <Coins size={16} />
             <span>数据日期</span>
-            <strong>{dateLabel(result)}</strong>
+            <strong>{dataDateLabel(priceDataDates.length > 0 ? priceDataDates : result?.dataDates ?? [])}</strong>
           </div>
           <div>
             <RefreshCw size={16} />

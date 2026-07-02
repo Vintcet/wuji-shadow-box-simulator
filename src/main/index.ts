@@ -492,19 +492,6 @@ async function refreshPrices(request: PriceRefreshRequest, sender: WebContents |
     let success = 0
     let failed = 0
 
-    await writeAppLog('price_refresh_start', {
-      requestId,
-      scope: refreshAll ? 'all' : 'selected',
-      server: refreshAll ? '全部区服' : request.server,
-      boxName: refreshAll ? '全部图' : request.boxName,
-      serverCount: servers.length,
-      itemCount: refs.length,
-      candidateTotal: allTasks.length,
-      total,
-      skipped,
-      concurrency: PRICE_REFRESH_CONCURRENCY
-    })
-
     sendPriceRefreshProgress(sender, {
       requestId,
       completed,
@@ -557,25 +544,11 @@ async function refreshPrices(request: PriceRefreshRequest, sender: WebContents |
     }
 
     const logEntries: AppLogEntry[] = [
-      ...skippedTasks.map((task) => ({
+      ...results.filter((result) => result.snapshot.lowestPrice === null).map((result) => ({
         event: 'price_refresh_item',
         details: {
           requestId,
-          status: 'skipped',
-          reason: 'already_updated_today',
-          server: task.server,
-          itemId: task.ref.itemId,
-          itemName: task.ref.jx3boxName ?? task.ref.itemName,
-          lowestPrice: task.snapshot.lowestPrice,
-          priceDate: task.snapshot.date,
-          fetchedAt: task.snapshot.fetchedAt
-        }
-      })),
-      ...results.map((result) => ({
-        event: 'price_refresh_item',
-        details: {
-          requestId,
-          status: result.snapshot.lowestPrice !== null ? 'success' : 'failed',
+          status: 'failed',
           server: result.server,
           itemId: result.ref.itemId,
           itemName: result.ref.jx3boxName ?? result.ref.itemName,
@@ -583,7 +556,7 @@ async function refreshPrices(request: PriceRefreshRequest, sender: WebContents |
           priceDate: result.snapshot.date,
           source: result.snapshot.source,
           fetchedAt: result.snapshot.fetchedAt,
-          error: result.snapshot.lowestPrice === null ? result.snapshot.error ?? 'unknown' : null
+          error: result.snapshot.error ?? 'unknown'
         }
       }))
     ]
@@ -601,20 +574,6 @@ async function refreshPrices(request: PriceRefreshRequest, sender: WebContents |
       skipped,
       snapshots: results.map((result) => result.snapshot)
     }
-
-    await writeAppLog('price_refresh_complete', {
-      requestId,
-      scope: refreshAll ? 'all' : 'selected',
-      server: response.server,
-      boxName: response.boxName,
-      total: response.total,
-      success,
-      failed,
-      skipped,
-      cachePath: response.cachePath,
-      updatedAt: response.updatedAt,
-      elapsedMs: Date.now() - startedAt
-    })
 
     return response
   } catch (error) {
@@ -658,11 +617,6 @@ function applySaleFee(price: number | null): number | null {
 async function simulate(request: SimulationRequest): Promise<SimulationResult> {
   const startedAt = Date.now()
   const count = Math.max(1, Math.min(SIMULATION_MAX_COUNT, Math.floor(Number(request.count) || 1)))
-  await writeAppLog('simulation_start', {
-    server: request.server,
-    boxName: request.boxName,
-    count
-  })
 
   try {
   const dataset = loadLootDataset()
@@ -761,18 +715,6 @@ async function simulate(request: SimulationRequest): Promise<SimulationResult> {
     items,
     draws
   }
-
-  await writeAppLog('simulation_complete', {
-    server: response.server,
-    boxName: response.boxName,
-    count: response.count,
-    totalCost: response.totalCost,
-    totalValue: response.totalValue,
-    profit: response.profit,
-    roi: response.roi,
-    missingPriceCount: response.missingPriceCount,
-    elapsedMs: Date.now() - startedAt
-  })
 
   return response
   } catch (error) {
