@@ -5,6 +5,7 @@ import brickIcon from './assets/trade/brick.png'
 import goldIcon from './assets/trade/gold.png'
 
 const DEFAULT_COUNT = 10
+const MAX_OPEN_COUNT = 999
 const HISTORY_STORAGE_KEY = 'wuji-opening-history'
 const MAX_HISTORY_RECORDS = 20
 const COPPER_PER_GOLD = 10000
@@ -325,10 +326,10 @@ export default function App() {
             <input
               type="number"
               min={1}
-              max={10000}
+              max={MAX_OPEN_COUNT}
               step={1}
               value={count}
-              onChange={(event) => setCount(Math.max(1, Math.min(10000, Number(event.target.value) || 1)))}
+              onChange={(event) => setCount(Math.max(1, Math.min(MAX_OPEN_COUNT, Number(event.target.value) || 1)))}
               disabled={loading}
             />
           </label>

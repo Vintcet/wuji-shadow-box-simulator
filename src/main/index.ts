@@ -90,6 +90,7 @@ let cachedPriceFile: PriceCacheFile | null = null
 const SALE_FEE_RATE = 0.05
 const PRICE_REFRESH_CONCURRENCY = 16
 const PRICE_REFRESH_COOLDOWN_MS = 5000
+const SIMULATION_MAX_COUNT = 999
 let lastPriceRefreshStartedAt = 0
 
 interface AppLogEntry {
@@ -98,7 +99,7 @@ interface AppLogEntry {
 }
 
 function getLogPath(): string {
-  return join(app.getPath('userData'), 'app.log')
+  return join(dirname(process.execPath), 'log', `${localDateKey(new Date()) ?? 'unknown-date'}.log`)
 }
 
 async function writeAppLog(event: string, details: Record<string, unknown> = {}): Promise<void> {
@@ -656,7 +657,7 @@ function applySaleFee(price: number | null): number | null {
 
 async function simulate(request: SimulationRequest): Promise<SimulationResult> {
   const startedAt = Date.now()
-  const count = Math.max(1, Math.min(10000, Math.floor(Number(request.count) || 1)))
+  const count = Math.max(1, Math.min(SIMULATION_MAX_COUNT, Math.floor(Number(request.count) || 1)))
   await writeAppLog('simulation_start', {
     server: request.server,
     boxName: request.boxName,
