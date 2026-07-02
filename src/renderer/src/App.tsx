@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, Box, Coins, Database, History, Play, RefreshCw, Server, Sparkles, Trash2 } from 'lucide-react'
 import type { AppData, BoxOption, PriceRefreshProgress, PriceRefreshResult, SimulationResult } from '../../shared/types'
+import { wujiApi } from './api'
 import brickIcon from './assets/trade/brick.png'
 import goldIcon from './assets/trade/gold.png'
 
@@ -57,7 +58,7 @@ function Money({ value, className = '' }: { value: number | null; className?: st
       {value < 0 && <span className="money-sign">-</span>}
       {moneyParts(value).map((part, index) => (
         <span className="money-part" key={`${part.icon}-${index}`}>
-          <span>{part.value.toLocaleString('zh-CN')}</span>
+          <span>{part.value}</span>
           <img src={part.icon} alt="" />
         </span>
       ))}
@@ -165,7 +166,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    window.wujiApi
+    wujiApi
       .getData()
       .then((data) => {
         setAppData(data)
@@ -187,7 +188,7 @@ export default function App() {
       : ''
 
   useEffect(() => {
-    return window.wujiApi.onPriceRefreshProgress((progress) => {
+    return wujiApi.onPriceRefreshProgress((progress) => {
       setRefreshProgress(progress)
     })
   }, [])
@@ -227,14 +228,16 @@ export default function App() {
     setRefreshProgress(null)
     setError('')
     try {
-      const nextRefreshResult = await window.wujiApi.refreshPrices({
+      const nextRefreshResult = await wujiApi.refreshPrices({
         server,
         boxName,
         scope: 'all',
         requestId
       })
+      const nextAppData = await wujiApi.getData()
       setRefreshResult(nextRefreshResult)
-      setCacheUpdatedAt(nextRefreshResult.updatedAt)
+      setAppData(nextAppData)
+      setCacheUpdatedAt(nextAppData.priceCacheUpdatedAt ?? nextRefreshResult.updatedAt)
       const nextDataDates = dataDatesFromRefreshResult(nextRefreshResult)
       if (nextDataDates.length > 0) {
         setPriceDataDates(nextDataDates)
@@ -255,7 +258,7 @@ export default function App() {
     setLoading(true)
     setError('')
     try {
-      const nextResult = await window.wujiApi.simulate({
+      const nextResult = await wujiApi.simulate({
         server,
         boxName,
         count
@@ -415,7 +418,7 @@ export default function App() {
                   <Money value={result.profit} />
                 </strong>
               </div>
-              <div className="metric">
+              <div className="metric roi-metric">
                 <span>收益率</span>
                 <strong>{formatPercent(result.roi)}</strong>
               </div>

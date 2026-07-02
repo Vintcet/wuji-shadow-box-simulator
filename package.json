@@ -6,39 +6,27 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "tsc --noEmit && electron-vite build",
-    "preview": "electron-vite preview",
-    "portable": "pnpm build && node scripts/build-portable.mjs",
-    "package": "pnpm portable"
+    "dev": "scripts\\run-tauri-vs.cmd dev",
+    "dev:web": "vite --config vite.config.ts",
+    "build:web": "tsc --noEmit && vite build --config vite.config.ts",
+    "build": "scripts\\run-tauri-vs.cmd build",
+    "preview": "vite preview --config vite.config.ts",
+    "tauri": "tauri",
+    "package": "pnpm build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "electron-vite": "^4.0.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "electron": "^33.2.1",
-    "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
-  },
-  "build": {
-    "appId": "com.wuji.shadowbox",
-    "productName": "武技殊影图开图模拟器",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "out/**/*"
-    ],
-    "win": {
-      "target": "dir"
-    }
   }
 }

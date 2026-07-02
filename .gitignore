@@ -3,5 +3,7 @@ out/
 dist/
 release/
 .vite/
+src-tauri/target/
+src-tauri/gen/
 *.log
 ~$*.xlsx
