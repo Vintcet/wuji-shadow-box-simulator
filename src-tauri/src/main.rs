@@ -16,7 +16,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-const LOOT_POOLS_JSON: &str = include_str!("../../src/main/data/loot-pools.json");
+const LOOT_POOLS_JSON: &str = include_str!("../../src/data/loot-pools.json");
 const SALE_FEE_RATE: f64 = 0.05;
 const PRICE_REFRESH_CONCURRENCY: usize = 16;
 const PRICE_REFRESH_COOLDOWN_MS: u128 = 5000;
@@ -484,7 +484,7 @@ fn load_loot_dataset(app: &AppHandle) -> Result<LootDataset, String> {
         .collect();
 
     Ok(LootDataset {
-        source_path: "src/main/data/loot-pools.json".to_string(),
+        source_path: "src/data/loot-pools.json".to_string(),
         loaded_at: raw.enriched_at.unwrap_or_else(iso_now),
         boxes,
         loot_by_box,

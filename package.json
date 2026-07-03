@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "JX3 武技殊影图开图模拟器",
-  "main": "out/main/index.js",
   "type": "module",
   "scripts": {
     "dev": "scripts\\run-tauri-vs.cmd dev",

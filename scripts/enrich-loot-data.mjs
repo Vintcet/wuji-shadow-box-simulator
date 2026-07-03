@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
-const dataPath = new URL('../src/main/data/loot-pools.json', import.meta.url)
+const dataPath = new URL('../src/data/loot-pools.json', import.meta.url)
 
 function normalizeName(name) {
   return String(name).replace(/\s+/g, '')
