@@ -92,6 +92,8 @@ export interface DrawResult {
   iconUrl: string | null
   price: number | null
   netPrice: number | null
+  priceLabel?: string | null
+  missingPrice?: boolean
   date: string | null
 }
 

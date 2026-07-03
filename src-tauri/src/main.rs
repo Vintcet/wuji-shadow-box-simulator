@@ -140,6 +140,8 @@ struct DrawResult {
     icon_url: Option<String>,
     price: Option<i64>,
     net_price: Option<i64>,
+    price_label: Option<String>,
+    missing_price: bool,
     date: Option<String>,
 }
 
@@ -1317,11 +1319,11 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
                 let key = item.item_id.clone().unwrap_or_else(|| normalize_name(&item.item_name));
                 let price = snapshot_by_key.get(&key);
                 let lowest_price = price.and_then(|snapshot| snapshot.lowest_price);
-                let (item_name, final_price, final_net_price, final_date, icon_url) = if lowest_price.is_some() {
+                let (final_price, final_net_price, price_label, final_date, icon_url) = if lowest_price.is_some() {
                     (
-                        item.item_name.clone(),
                         lowest_price,
                         apply_sale_fee(lowest_price),
+                        None,
                         price.and_then(|snapshot| snapshot.date.clone()),
                         price
                             .and_then(|snapshot| snapshot.icon_url.clone())
@@ -1329,17 +1331,17 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
                     )
                 } else if use_box_cost_for_missing {
                     (
-                        "成本价".to_string(),
                         box_unit_cost,
                         box_unit_cost,
+                        Some("成本价".to_string()),
                         box_price.date.clone(),
                         box_price.icon_url.clone(),
                     )
                 } else {
                     (
-                        item.item_name.clone(),
                         Some(0),
                         Some(0),
+                        None,
                         None,
                         price
                             .and_then(|snapshot| snapshot.icon_url.clone())
@@ -1349,11 +1351,13 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
 
                 DrawResult {
                     index: draw_index + 1,
-                    item_name,
+                    item_name: item.item_name.clone(),
                     school: item.school.clone(),
                     icon_url,
                     price: final_price,
                     net_price: final_net_price,
+                    price_label,
+                    missing_price: lowest_price.is_none(),
                     date: final_date,
                 }
             })
@@ -1395,10 +1399,12 @@ async fn simulate(app: AppHandle, request: SimulationRequest) -> Result<Simulati
             (Some(profit), Some(cost)) if cost != 0 => Some(profit as f64 / cost as f64),
             _ => None,
         };
-        let missing_items = items
+        let missing_items = draws
             .iter()
-            .filter(|item| item.unit_price.is_none())
+            .filter(|item| item.missing_price)
             .map(|item| item.item_name.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect::<Vec<_>>();
         let mut data_dates = HashSet::new();
         if let Some(date) = box_price.date.clone() {

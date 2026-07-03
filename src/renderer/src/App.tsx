@@ -458,6 +458,7 @@ export default function App() {
                     <span>{draw.school}</span>
                     <span className="price-stack">
                       <strong>
+                        {draw.priceLabel && <span className="price-label">（{draw.priceLabel}）</span>}
                         <Money value={draw.netPrice} />
                       </strong>
                     </span>

@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, rename, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, rm, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,7 @@ const exePath = resolve(target, 'electron.exe')
 const renamedExePath = resolve(target, '武技殊影图开图模拟器.exe')
 const logDir = resolve(target, 'log')
 const preservedLogDir = resolve(root, 'release/.wuji-shadow-log-backup')
+const keptLocales = new Set(['zh-CN.pak', 'zh-TW.pak', 'en-US.pak', 'en-GB.pak', 'ja.pak'])
 
 function assertInsideRoot(path) {
   const normalizedRoot = root.endsWith(sep) ? root : `${root}${sep}`
@@ -41,6 +42,12 @@ if (existsSync(logDir)) {
 await rm(target, { recursive: true, force: true })
 await mkdir(appDir, { recursive: true })
 await cp(electronDist, target, { recursive: true })
+const localesDir = resolve(target, 'locales')
+for (const localeFile of await readdir(localesDir)) {
+  if (localeFile.endsWith('.pak') && !keptLocales.has(localeFile)) {
+    await rm(resolve(localesDir, localeFile), { force: true })
+  }
+}
 if (existsSync(preservedLogDir)) {
   await cp(preservedLogDir, logDir, { recursive: true })
   await rm(preservedLogDir, { recursive: true, force: true })

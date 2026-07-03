@@ -577,6 +577,12 @@ tbody tr:hover {
   gap: 2px;
 }
 
+.price-label {
+  color: #887f72;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .money {
   display: inline-flex;
   align-items: center;
