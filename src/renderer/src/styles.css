@@ -417,6 +417,10 @@ select {
   gap: 8px;
 }
 
+.summary-grid + .summary-grid {
+  margin-top: 12px;
+}
+
 .metric {
   min-width: 0;
   min-height: 62px;
@@ -483,6 +487,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   min-height: 44px;
   padding: 0 16px;
   border-bottom: 1px solid #e7dfd0;
@@ -491,6 +496,66 @@ select {
 .section-title span {
   color: #6b665f;
   font-size: 14px;
+}
+
+.section-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.switch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #5d574f;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 18px;
+  border: 1px solid #bfb6a5;
+  border-radius: 999px;
+  background: #eadfce;
+  padding: 2px;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.switch-track span {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #fffdf8;
+  box-shadow: 0 1px 2px rgba(35, 33, 29, 0.28);
+  transition: transform 0.18s ease;
+}
+
+.switch-control input:checked + .switch-track {
+  border-color: #2f6f73;
+  background: #2f6f73;
+}
+
+.switch-control input:checked + .switch-track span {
+  transform: translateX(16px);
+}
+
+.switch-control input:focus-visible + .switch-track {
+  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.18);
 }
 
 .table-wrap {
@@ -562,6 +627,30 @@ tbody tr:hover {
   font-size: 14px;
 }
 
+.preview-row {
+  grid-template-columns: 74px minmax(0, 1fr) 128px;
+  min-height: 38px;
+  padding: 5px 12px;
+}
+
+.school-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 24px;
+  border: 1px solid #d8d1c3;
+  border-radius: 999px;
+  background: #f7f1e7;
+  color: #5d574f;
+  padding: 0 8px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .draw-index {
   color: #887f72;
   font-variant-numeric: tabular-nums;
@@ -569,6 +658,31 @@ tbody tr:hover {
 
 .draw-row strong {
   text-align: right;
+}
+
+.aggregate-row {
+  background: #fffaf1;
+}
+
+.aggregate-row .draw-index {
+  color: #1f5d61;
+  font-weight: 800;
+}
+
+.aggregated-item-name {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aggregated-item-name strong {
+  flex: 0 0 auto;
+  color: #1f5d61;
+  font-size: 13px;
 }
 
 .price-stack {

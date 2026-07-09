@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, Box, Coins, Database, History, Play, RefreshCw, Server, Sparkles, Trash2 } from 'lucide-react'
-import type { AppData, BoxOption, MissingPriceMode, PriceRefreshProgress, PriceRefreshResult, SimulationResult } from '../../shared/types'
+import type { AppData, BoxOption, BoxPreviewResult, MissingPriceMode, PriceRefreshProgress, PriceRefreshResult, SimulationResult } from '../../shared/types'
 import { wujiApi } from './api'
 import brickIcon from './assets/trade/brick.png'
 import goldIcon from './assets/trade/gold.png'
@@ -155,6 +155,8 @@ export default function App() {
   const [boxName, setBoxName] = useState('')
   const [count, setCount] = useState(DEFAULT_COUNT)
   const [missingPriceMode, setMissingPriceMode] = useState<MissingPriceMode>('zero')
+  const [preview, setPreview] = useState<BoxPreviewResult | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [refreshResult, setRefreshResult] = useState<PriceRefreshResult | null>(null)
   const [refreshProgress, setRefreshProgress] = useState<PriceRefreshProgress | null>(null)
@@ -165,6 +167,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [aggregateDrawList, setAggregateDrawList] = useState(false)
 
   useEffect(() => {
     wujiApi
@@ -173,7 +176,6 @@ export default function App() {
         setAppData(data)
         setCacheUpdatedAt(data.priceCacheUpdatedAt)
         setServer(data.serverGroups[0]?.servers[0] ?? '')
-        setBoxName(data.boxes[0]?.name ?? '')
       })
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : String(reason))
@@ -187,6 +189,46 @@ export default function App() {
     : refreshResult
       ? `更新完成：成功 ${refreshResult.success}，失败 ${refreshResult.failed}，跳过 ${refreshResult.skipped}`
       : ''
+
+  useEffect(() => {
+    if (!server || !boxName) {
+      setPreview(null)
+      setPriceDataDates([])
+      return
+    }
+
+    let disposed = false
+    setPreview(null)
+    setPreviewLoading(true)
+    setError('')
+    wujiApi
+      .getBoxPreview({
+        server,
+        boxName,
+        missingPriceMode
+      })
+      .then((nextPreview) => {
+        if (disposed) {
+          return
+        }
+        setPreview(nextPreview)
+        setPriceDataDates(nextPreview.dataDates)
+      })
+      .catch((reason: unknown) => {
+        if (!disposed) {
+          setError(reason instanceof Error ? reason.message : String(reason))
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setPreviewLoading(false)
+        }
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [boxName, cacheUpdatedAt, missingPriceMode, server])
 
   useEffect(() => {
     return wujiApi.onPriceRefreshProgress((progress) => {
@@ -216,6 +258,22 @@ export default function App() {
       window.clearTimeout(clearTimer)
     }
   }, [refreshResult, refreshing])
+
+  function selectServer(nextServer: string): void {
+    setServer(nextServer)
+    setResult(null)
+  }
+
+  function selectBox(nextBoxName: string): void {
+    setBoxName(nextBoxName)
+    setResult(null)
+    setAggregateDrawList(false)
+  }
+
+  function selectMissingPriceMode(nextMode: MissingPriceMode): void {
+    setMissingPriceMode(nextMode)
+    setResult(null)
+  }
 
   async function refreshPrices(): Promise<void> {
     if (!appData) {
@@ -303,7 +361,7 @@ export default function App() {
               <Server size={16} />
               区服
             </span>
-            <select value={server} onChange={(event) => setServer(event.target.value)} disabled={!appData || loading}>
+            <select value={server} onChange={(event) => selectServer(event.target.value)} disabled={!appData || loading}>
               {appData?.serverGroups.map((group) => (
                 <optgroup key={group.zoneName} label={group.zoneName}>
                   {group.servers.map((serverName) => (
@@ -321,7 +379,8 @@ export default function App() {
               <Box size={16} />
               图的种类
             </span>
-            <select value={boxName} onChange={(event) => setBoxName(event.target.value)} disabled={!appData || loading}>
+            <select value={boxName} onChange={(event) => selectBox(event.target.value)} disabled={!appData || loading}>
+              <option value="">请选择图的种类</option>
               {appData?.boxes.map((box) => (
                 <option key={box.name} value={box.name}>
                   {optionLabel(box)}
@@ -352,7 +411,7 @@ export default function App() {
           </button>
           {priceStatus && <div className={`price-status ${refreshing ? 'active' : 'done'} ${showRefreshStatus ? 'show' : 'hide'}`}>{priceStatus}</div>}
 
-          <button className="primary-button" type="button" onClick={runSimulation} disabled={!appData || loading || refreshing}>
+          <button className="primary-button" type="button" onClick={runSimulation} disabled={!appData || !boxName || loading || refreshing}>
             <Play size={18} />
             {loading ? '开图中' : '开始开图'}
           </button>
@@ -367,7 +426,7 @@ export default function App() {
           <label>
             <Coins size={16} />
             <span>缺价处理</span>
-            <select value={missingPriceMode} onChange={(event) => setMissingPriceMode(event.target.value as MissingPriceMode)} disabled={loading}>
+            <select value={missingPriceMode} onChange={(event) => selectMissingPriceMode(event.target.value as MissingPriceMode)} disabled={loading}>
               <option value="zero">视为0</option>
               <option value="box-cost">视为成本价</option>
             </select>
@@ -394,13 +453,96 @@ export default function App() {
         )}
 
         {!result ? (
-          <section className="empty-state">
-            <div className="empty-icon">
-              <Sparkles size={40} />
-            </div>
-            <h2>选择区服、图的种类和数量后开始模拟</h2>
-            <p>先点击更新价格数据写入本地缓存，再按缓存里的 JX3BOX 最新可用最低价计算开图结果。</p>
-          </section>
+          !boxName ? (
+            <section className="empty-state">
+              <div className="empty-icon">
+                <Sparkles size={40} />
+              </div>
+              <h2>先从左侧选择图的种类</h2>
+              <p>选中后会显示当前区服价格、单次开图预期收益和完整可开出列表。</p>
+            </section>
+          ) : previewLoading && !preview ? (
+            <section className="empty-state">
+              <div className="empty-icon">
+                <RefreshCw size={40} className="spin" />
+              </div>
+              <h2>正在读取价格缓存</h2>
+              <p>当前区服：{server}</p>
+            </section>
+          ) : preview ? (
+            <>
+              <section className="summary-grid" aria-label="预期收益计算">
+                <div className="metric">
+                  <span>武技图单价</span>
+                  <strong>
+                    <Money value={preview.boxUnitCost} />
+                  </strong>
+                </div>
+                <div className="metric">
+                  <span>预期产出</span>
+                  <strong>
+                    <Money value={preview.expectedValue} />
+                  </strong>
+                </div>
+                <div className={`metric ${outcomeClass(preview.expectedProfit)}`}>
+                  <span>预期收益</span>
+                  <strong>
+                    <Money value={preview.expectedProfit} />
+                  </strong>
+                </div>
+                <div className={`metric roi-metric ${outcomeClass(preview.expectedProfit)}`}>
+                  <span>收益率</span>
+                  <strong>{formatPercent(preview.expectedRoi)}</strong>
+                </div>
+                <div className="metric roi-metric">
+                  <span>缺价条目</span>
+                  <strong>{preview.missingPriceCount}</strong>
+                </div>
+              </section>
+
+              <section className="result-header">
+                <div>
+                  <h2>
+                    {preview.server} · {preview.boxName}
+                  </h2>
+                  <p>按所有可开出图等概率计算，列表价格为当前选中服务器的最新最低价。</p>
+                </div>
+              </section>
+
+              <section className="table-section" aria-label="可开出图列表">
+                <div className="section-title">
+                  <h3>可开出图列表</h3>
+                  <div className="section-actions">
+                    <span>{preview.items.length} 种 · 当前区服价格</span>
+                  </div>
+                </div>
+                <div className="draw-list preview-list">
+                  {preview.items.map((item) => (
+                    <div className="draw-row preview-row" key={`${item.school}-${item.itemName}`}>
+                      <span className="school-tag">{item.school}</span>
+                      <span className="item-name">
+                        {item.iconUrl ? <img src={item.iconUrl} alt="" /> : <span className="icon-fallback" />}
+                        {item.itemName}
+                      </span>
+                      <span className="price-stack">
+                        <strong>
+                          <Money value={item.netPrice} />
+                        </strong>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="empty-state">
+              <div className="empty-icon">
+                <AlertTriangle size={40} />
+              </div>
+              <h2>暂时无法显示这个图</h2>
+              <p>请确认左侧已经选择区服和图的种类。</p>
+            </section>
+          )
         ) : (
           <>
             <section className="summary-grid" aria-label="收益计算">
@@ -445,25 +587,53 @@ export default function App() {
             <section className="table-section" aria-label="逐次开图明细">
               <div className="section-title">
                 <h3>开图明细</h3>
-                <span>显示全部 {result.draws.length} 次</span>
+                <div className="section-actions">
+                  <span>{aggregateDrawList ? `聚合 ${result.items.length} 种 · 共 ${result.draws.length} 次` : `显示全部 ${result.draws.length} 次`}</span>
+                  <label className="switch-control">
+                    <input type="checkbox" checked={aggregateDrawList} onChange={(event) => setAggregateDrawList(event.target.checked)} />
+                    <span className="switch-track" aria-hidden="true">
+                      <span />
+                    </span>
+                    <span>聚合显示</span>
+                  </label>
+                </div>
               </div>
               <div className="draw-list">
-                {result.draws.map((draw) => (
-                  <div className="draw-row" key={`${draw.index}-${draw.itemName}`}>
-                    <span className="draw-index">#{draw.index}</span>
-                    <span className="item-name">
-                      {draw.iconUrl ? <img src={draw.iconUrl} alt="" /> : <span className="icon-fallback" />}
-                      {draw.itemName}
-                    </span>
-                    <span>{draw.school}</span>
-                    <span className="price-stack">
-                      <strong>
-                        {draw.priceLabel && <span className="price-label">（{draw.priceLabel}）</span>}
-                        <Money value={draw.netPrice} />
-                      </strong>
-                    </span>
-                  </div>
-                ))}
+                {aggregateDrawList
+                  ? result.items.map((item) => (
+                      <div className="draw-row aggregate-row" key={`${item.school}-${item.itemName}`}>
+                        <span className="draw-index">×{item.count}</span>
+                        <span className="item-name">
+                          {item.iconUrl ? <img src={item.iconUrl} alt="" /> : <span className="icon-fallback" />}
+                          <span className="aggregated-item-name">
+                            {item.itemName}
+                            <strong>×{item.count}</strong>
+                          </span>
+                        </span>
+                        <span>{item.school}</span>
+                        <span className="price-stack">
+                          <strong>
+                            <Money value={item.subtotal} />
+                          </strong>
+                        </span>
+                      </div>
+                    ))
+                  : result.draws.map((draw) => (
+                      <div className="draw-row" key={`${draw.index}-${draw.itemName}`}>
+                        <span className="draw-index">#{draw.index}</span>
+                        <span className="item-name">
+                          {draw.iconUrl ? <img src={draw.iconUrl} alt="" /> : <span className="icon-fallback" />}
+                          {draw.itemName}
+                        </span>
+                        <span>{draw.school}</span>
+                        <span className="price-stack">
+                          <strong>
+                            {draw.priceLabel && <span className="price-label">（{draw.priceLabel}）</span>}
+                            <Money value={draw.netPrice} />
+                          </strong>
+                        </span>
+                      </div>
+                    ))}
               </div>
             </section>
           </>

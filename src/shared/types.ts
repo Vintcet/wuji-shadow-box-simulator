@@ -54,6 +54,12 @@ export interface SimulationRequest {
   missingPriceMode: MissingPriceMode
 }
 
+export interface BoxPreviewRequest {
+  server: string
+  boxName: string
+  missingPriceMode: MissingPriceMode
+}
+
 export interface PriceRefreshRequest {
   server: string
   boxName: string
@@ -106,6 +112,30 @@ export interface AggregatedResult {
   unitNetPrice: number | null
   subtotal: number | null
   date: string | null
+}
+
+export interface BoxPreviewItem {
+  itemName: string
+  school: string
+  iconUrl: string | null
+  price: number | null
+  netPrice: number | null
+  priceLabel?: string | null
+  missingPrice?: boolean
+  date: string | null
+}
+
+export interface BoxPreviewResult {
+  boxName: string
+  server: string
+  dataDates: string[]
+  boxPrice: PriceSnapshot
+  boxUnitCost: number | null
+  expectedValue: number
+  expectedProfit: number | null
+  expectedRoi: number | null
+  missingPriceCount: number
+  items: BoxPreviewItem[]
 }
 
 export interface SimulationResult {

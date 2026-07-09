@@ -96,6 +96,14 @@ struct SimulationRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct BoxPreviewRequest {
+    server: String,
+    box_name: String,
+    missing_price_mode: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PriceRefreshRequest {
     server: String,
     box_name: String,
@@ -156,6 +164,34 @@ struct AggregatedResult {
     unit_net_price: Option<i64>,
     subtotal: Option<i64>,
     date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoxPreviewItem {
+    item_name: String,
+    school: String,
+    icon_url: Option<String>,
+    price: Option<i64>,
+    net_price: Option<i64>,
+    price_label: Option<String>,
+    missing_price: bool,
+    date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoxPreviewResult {
+    box_name: String,
+    server: String,
+    data_dates: Vec<String>,
+    box_price: PriceSnapshot,
+    box_unit_cost: Option<i64>,
+    expected_value: i64,
+    expected_profit: Option<i64>,
+    expected_roi: Option<f64>,
+    missing_price_count: usize,
+    items: Vec<BoxPreviewItem>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1070,6 +1106,124 @@ async fn get_data(app: AppHandle) -> Result<AppData, String> {
 }
 
 #[tauri::command]
+async fn get_box_preview(app: AppHandle, request: BoxPreviewRequest) -> Result<BoxPreviewResult, String> {
+    let dataset = load_loot_dataset(&app)?;
+    let loot_pool = dataset
+        .loot_by_box
+        .get(&request.box_name)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| format!("找不到箱子池子：{}", request.box_name))?;
+    let box_ref = dataset
+        .box_refs
+        .get(&request.box_name)
+        .ok_or_else(|| format!("找不到箱子池子：{}", request.box_name))?;
+    let refs = get_refs_for_box(&dataset, &request.box_name)?;
+    let mut snapshot_by_key = HashMap::new();
+
+    for item_ref in &refs {
+        let snapshot = get_cached_price(&app, item_ref, &request.server).await?;
+        snapshot_by_key.insert(item_ref.item_id.clone().unwrap_or_else(|| normalize_name(&item_ref.item_name)), snapshot);
+    }
+
+    let box_key = box_ref.item_id.clone().unwrap_or_else(|| normalize_name(&box_ref.item_name));
+    let box_price = snapshot_by_key
+        .get(&box_key)
+        .cloned()
+        .unwrap_or_else(|| snapshot_without_price(box_ref, &request.server, "本地没有价格缓存", None));
+    let box_unit_cost = box_price.lowest_price;
+    let use_box_cost_for_missing = request.missing_price_mode == "box-cost";
+    let mut data_dates = HashSet::new();
+
+    if let Some(date) = box_price.date.clone() {
+        data_dates.insert(date);
+    }
+
+    let mut missing_item_names = HashSet::new();
+    let items = loot_pool
+        .iter()
+        .map(|item| {
+            let key = item.item_id.clone().unwrap_or_else(|| normalize_name(&item.item_name));
+            let snapshot = snapshot_by_key.get(&key);
+            let lowest_price = snapshot.and_then(|snapshot| snapshot.lowest_price);
+            let missing_price = lowest_price.is_none();
+            if missing_price {
+                missing_item_names.insert(item.item_name.clone());
+            }
+
+            let (net_price, price_label, date, icon_url) = if lowest_price.is_some() {
+                let date = snapshot.and_then(|snapshot| snapshot.date.clone());
+                if let Some(date_value) = date.clone() {
+                    data_dates.insert(date_value);
+                }
+                (
+                    apply_sale_fee(lowest_price),
+                    None,
+                    date,
+                    snapshot
+                        .and_then(|snapshot| snapshot.icon_url.clone())
+                        .or_else(|| icon_url_from_icon_id(item.icon_id)),
+                )
+            } else if use_box_cost_for_missing {
+                (
+                    box_unit_cost,
+                    Some("按成本计入".to_string()),
+                    box_price.date.clone(),
+                    snapshot
+                        .and_then(|snapshot| snapshot.icon_url.clone())
+                        .or_else(|| icon_url_from_icon_id(item.icon_id)),
+                )
+            } else {
+                (
+                    Some(0),
+                    Some("按0计入".to_string()),
+                    None,
+                    snapshot
+                        .and_then(|snapshot| snapshot.icon_url.clone())
+                        .or_else(|| icon_url_from_icon_id(item.icon_id)),
+                )
+            };
+
+            BoxPreviewItem {
+                item_name: item.item_name.clone(),
+                school: item.school.clone(),
+                icon_url,
+                price: lowest_price,
+                net_price,
+                price_label,
+                missing_price,
+                date,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let expected_value = if items.is_empty() {
+        0
+    } else {
+        (items.iter().map(|item| item.net_price.unwrap_or(0)).sum::<i64>() as f64 / items.len() as f64).round() as i64
+    };
+    let expected_profit = box_unit_cost.map(|cost| expected_value - cost);
+    let expected_roi = match (expected_profit, box_unit_cost) {
+        (Some(profit), Some(cost)) if cost != 0 => Some(profit as f64 / cost as f64),
+        _ => None,
+    };
+    let mut data_dates = data_dates.into_iter().collect::<Vec<_>>();
+    data_dates.sort();
+
+    Ok(BoxPreviewResult {
+        box_name: request.box_name,
+        server: request.server,
+        data_dates,
+        box_price,
+        box_unit_cost,
+        expected_value,
+        expected_profit,
+        expected_roi,
+        missing_price_count: missing_item_names.len(),
+        items,
+    })
+}
+
+#[tauri::command]
 async fn refresh_prices(app: AppHandle, state: tauri::State<'_, AppState>, request: PriceRefreshRequest) -> Result<PriceRefreshResult, String> {
     let request_id = request.request_id.clone().unwrap_or_else(|| now_millis().to_string());
     let now = now_millis();
@@ -1462,7 +1616,7 @@ fn main() {
         .manage(AppState {
             last_price_refresh_started_at: Mutex::new(0),
         })
-        .invoke_handler(tauri::generate_handler![get_data, refresh_prices, simulate])
+        .invoke_handler(tauri::generate_handler![get_data, get_box_preview, refresh_prices, simulate])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
