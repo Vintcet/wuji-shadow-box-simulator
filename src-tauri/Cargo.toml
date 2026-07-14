@@ -1,6 +1,6 @@
 [package]
 name = "wuji-shadow-box-simulator"
-version = "0.1.0"
+version = "0.1.1"
 description = "JX3 武技殊影图开图模拟器"
 authors = ["兰舟少住"]
 edition = "2021"

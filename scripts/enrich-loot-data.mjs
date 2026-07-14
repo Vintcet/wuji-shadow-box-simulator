@@ -11,7 +11,7 @@ async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
       accept: 'application/json,text/plain,*/*',
-      'user-agent': 'wuji-shadow-box-simulator-data/0.1.0'
+      'user-agent': 'wuji-shadow-box-simulator-data/0.1.1'
     }
   })
 

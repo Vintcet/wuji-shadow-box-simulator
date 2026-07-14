@@ -22,13 +22,13 @@ https://github.com/Vintcet/wuji-shadow-box-simulator/releases
 推荐下载安装版：
 
 ```text
-wuji-shadow-box-simulator-0.1.0-x64-setup.exe
+wuji-shadow-box-simulator-0.1.1-x64-setup.exe
 ```
 
 如果不想安装，可以下载绿色版单文件：
 
 ```text
-wuji-shadow-box-simulator-0.1.0-x64-portable.exe
+wuji-shadow-box-simulator-0.1.1-x64-portable.exe
 ```
 
 安装后打开应用：
@@ -98,7 +98,7 @@ pnpm build
 
 ```text
 src-tauri/target/release/wuji-shadow-box-simulator.exe
-src-tauri/target/release/bundle/nsis/武技殊影图开图模拟器_0.1.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/武技殊影图开图模拟器_0.1.1_x64-setup.exe
 ```
 
 只构建前端：

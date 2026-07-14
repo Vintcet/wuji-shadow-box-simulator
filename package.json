@@ -1,6 +1,6 @@
 {
   "name": "wuji-shadow-box-simulator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "JX3 武技殊影图开图模拟器",
   "type": "module",

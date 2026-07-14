@@ -11,8 +11,8 @@ const HISTORY_STORAGE_KEY = 'wuji-opening-history'
 const MAX_HISTORY_RECORDS = 20
 const COPPER_PER_GOLD = 10000
 const COPPER_PER_BRICK = 100000000
-const APP_VERSION = 'v0.1.0'
-const APP_RELEASE_DATE = '2026-07-03'
+const APP_VERSION = 'v0.1.1'
+const APP_RELEASE_DATE = '2026-07-10'
 const APP_AUTHOR = '兰舟少住'
 
 interface OpeningHistoryRecord {

@@ -1253,7 +1253,7 @@ async fn refresh_prices(app: AppHandle, state: tauri::State<'_, AppState>, reque
     let result = async {
         let refresh_all = request.scope.as_deref() == Some("all");
         let client = Client::builder()
-            .user_agent("wuji-shadow-box-simulator/0.1.0")
+            .user_agent("wuji-shadow-box-simulator/0.1.1")
             .build()
             .map_err(|error| error.to_string())?;
 
